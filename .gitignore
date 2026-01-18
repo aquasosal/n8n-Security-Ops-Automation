@@ -1,0 +1,39 @@
+# n8n
+.n8n/
+*.db
+
+# Node modules
+node_modules/
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+temp/
+tmp/
+
+# Scan results
+results/
+scans/
+*.xml
+*.json.bak
+
+# Screenshots (실제 스크린샷 추가 시 주석 해제)
+# screenshots/*.png
+# screenshots/*.jpg
+tmpclaude-*
