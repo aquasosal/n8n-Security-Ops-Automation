@@ -98,11 +98,14 @@ API/Nmap 실행     → 10분 (자동)
 
 ```
 security-automation-n8n/
-├── cve-monitor.json              # n8n 워크플로우 (import용)
+├── production-workflow.json       # ⭐ 프로덕션 워크플로우 (자동 실행)
+├── nmap-parser-workflow.json     # Nmap 파싱 테스트 워크플로우
+├── test-workflow-simple.json     # 기본 동작 확인용
 ├── scripts/
-│   ├── parse-nmap.js            # Nmap XML → JSON 파싱
-│   └── parse-cve.js             # NVD API → 위험도 분석
-├── screenshots/                  # 워크플로우 캡처 (가이드)
+│   ├── parse-nmap.js             # Nmap XML → JSON 파싱
+│   └── parse-cve.js              # NVD API → 위험도 분석
+├── screenshots/
+│   └── nmap-workflow-result.png  # 실제 실행 결과 캡처
 └── README.md
 ```
 
@@ -278,6 +281,35 @@ const targetProducts = [
   'docker'
 ];
 ```
+
+## 🧪 Implementation & Testing
+
+### Docker 환경 구축
+
+```bash
+# n8n 컨테이너 실행
+docker run -d --name n8n -p 5678:5678 -v n8n_data:/home/node/.n8n n8nio/n8n
+
+# Nmap 설치 (Alpine Linux)
+docker exec -u root n8n apk add nmap nmap-scripts
+```
+
+### 워크플로우 단계별 테스트
+
+1. **test-workflow-simple.json**: 기본 Nmap 실행 확인 ✅
+   - 3개 노드: Manual Trigger → Nmap Scan → Display Result
+   - localhost 포트 80, 443 스캔
+   - 정상 작동 확인
+
+2. **nmap-parser-workflow.json**: 파싱 로직 검증 ✅
+   - 5개 노드: Trigger → Nmap → Parse → Critical Check → Alert/OK
+   - XML 파싱 및 위험도 평가 테스트
+   - 실제 실행 결과: [Screenshot](screenshots/nmap-workflow-result.png)
+
+3. **production-workflow.json**: 프로덕션 배포 🚀
+   - 7개 노드: 자동화된 전체 플로우
+   - 단일 클릭으로 전체 스캔 → 분석 → 알림 자동 실행
+   - 리포트 자동 생성 및 분기 처리
 
 ## 📊 Impact & Results
 
