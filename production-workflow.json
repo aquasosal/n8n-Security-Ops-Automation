@@ -1,0 +1,222 @@
+{
+  "name": "Production: Multi-Target Security Scanner",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "target1",
+              "name": "target",
+              "value": "localhost",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-targets",
+      "name": "스캔 대상 설정",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 400],
+      "notes": "여기서 스캔 대상 IP 변경"
+    },
+    {
+      "parameters": {
+        "command": "=nmap -sV -p 22,80,443,3306,3389,5678,8080 -oX - {{ $json.target }}",
+        "options": {}
+      },
+      "id": "nmap-scan",
+      "name": "Nmap 스캔",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [680, 400],
+      "notes": "주요 포트 스캔"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== Nmap XML Parser (통합 버전) =====\n\nconst nmapOutput = $input.first().json.stdout;\n\nfunction parseNmapXML(xmlData) {\n  const hosts = [];\n  const hostRegex = /<host[^>]*>([\\s\\S]*?)<\\/host>/g;\n  let hostMatch;\n  \n  while ((hostMatch = hostRegex.exec(xmlData)) !== null) {\n    const hostBlock = hostMatch[1];\n    const stateMatch = /<status\\s+state=\"([^\"]+)\"/.exec(hostBlock);\n    if (!stateMatch || stateMatch[1] !== 'up') continue;\n    \n    const addressMatch = /<address\\s+addr=\"([^\"]+)\"\\s+addrtype=\"ipv4\"/.exec(hostBlock);\n    const ip = addressMatch ? addressMatch[1] : 'unknown';\n    \n    const ports = [];\n    const portRegex = /<port\\s+protocol=\"([^\"]+)\"\\s+portid=\"([^\"]+)\">([\\s\\S]*?)<\\/port>/g;\n    let portMatch;\n    \n    while ((portMatch = portRegex.exec(hostBlock)) !== null) {\n      const protocol = portMatch[1];\n      const portid = portMatch[2];\n      const portBlock = portMatch[3];\n      \n      const portStateMatch = /<state\\s+state=\"([^\"]+)\"/.exec(portBlock);\n      const state = portStateMatch ? portStateMatch[1] : 'unknown';\n      \n      const serviceMatch = /<service\\s+name=\"([^\"]+)\"(?:\\s+product=\"([^\"]*)\")? ?\\/?>/.exec(portBlock);\n      const service = serviceMatch ? serviceMatch[1] : 'unknown';\n      const product = serviceMatch && serviceMatch[2] ? serviceMatch[2] : '';\n      \n      // 위험도 평가\n      const criticalPorts = ['22', '23', '3389', '5900', '445'];\n      const dbPorts = ['3306', '5432', '1433', '27017', '6379'];\n      let risk_level = 'low';\n      \n      if (criticalPorts.includes(portid)) risk_level = 'critical';\n      else if (dbPorts.includes(portid)) risk_level = 'high';\n      else if (['80', '443', '8080', '8443'].includes(portid)) risk_level = 'medium';\n      \n      ports.push({\n        port: parseInt(portid),\n        protocol,\n        state,\n        service,\n        product,\n        risk_level\n      });\n    }\n    \n    hosts.push({\n      ip,\n      state: 'up',\n      ports,\n      open_ports_count: ports.filter(p => p.state === 'open').length\n    });\n  }\n  \n  return hosts;\n}\n\nfunction generateStatistics(hosts) {\n  let stats = {\n    total_hosts: hosts.length,\n    total_ports: 0,\n    open_ports: 0,\n    critical_ports: 0,\n    high_ports: 0,\n    medium_ports: 0\n  };\n  \n  hosts.forEach(host => {\n    host.ports.forEach(port => {\n      stats.total_ports++;\n      if (port.state === 'open') {\n        stats.open_ports++;\n        if (port.risk_level === 'critical') stats.critical_ports++;\n        else if (port.risk_level === 'high') stats.high_ports++;\n        else if (port.risk_level === 'medium') stats.medium_ports++;\n      }\n    });\n  });\n  \n  return stats;\n}\n\nfunction generateReport(hosts, stats) {\n  let report = `\n╔════════════════════════════════════════╗\n║   Nmap 보안 스캔 결과                  ║\n╚════════════════════════════════════════╝\n\n📊 통계:\n  • 스캔 호스트: ${stats.total_hosts}대\n  • 전체 포트: ${stats.total_ports}개\n  • 열린 포트: ${stats.open_ports}개\n  🔴 Critical: ${stats.critical_ports}개\n  🟠 High: ${stats.high_ports}개\n  🟡 Medium: ${stats.medium_ports}개\n\n`;\n  \n  if (stats.critical_ports > 0 || stats.high_ports > 0) {\n    report += `⚠️  위험 포트 상세:\n`;\n    hosts.forEach(host => {\n      const dangerPorts = host.ports.filter(p => \n        p.state === 'open' && ['critical', 'high'].includes(p.risk_level)\n      );\n      \n      if (dangerPorts.length > 0) {\n        report += `\\n🖥  ${host.ip}\\n`;\n        dangerPorts.forEach(port => {\n          const icon = port.risk_level === 'critical' ? '🔴' : '🟠';\n          report += `   ${icon} ${port.port}/${port.protocol} - ${port.service}`;\n          if (port.product) report += ` (${port.product})`;\n          report += `\\n`;\n        });\n      }\n    });\n  } else {\n    report += `✅ 위험 포트가 발견되지 않았습니다.\\n`;\n  }\n  \n  report += `\\n⏰ 스캔 시간: ${new Date().toLocaleString('ko-KR')}\\n`;\n  \n  return report;\n}\n\ntry {\n  const hosts = parseNmapXML(nmapOutput);\n  const statistics = generateStatistics(hosts);\n  const report = generateReport(hosts, statistics);\n  \n  // 콘솔 출력\n  console.log(report);\n  \n  return {\n    json: {\n      success: true,\n      scan_time: new Date().toISOString(),\n      target: $input.first().json.target,\n      statistics,\n      hosts,\n      report,\n      alert_required: statistics.critical_ports > 0 || statistics.high_ports > 0\n    }\n  };\n} catch (error) {\n  return {\n    json: {\n      success: false,\n      error: error.message,\n      timestamp: new Date().toISOString()\n    }\n  };\n}"
+      },
+      "id": "parse-results",
+      "name": "결과 분석",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 400],
+      "notes": "파싱 + 통계 + 리포트 생성"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.alert_required }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-alert",
+      "name": "알림 필요?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nconsole.log('\\n🚨 보안 경고 발생!');\nconsole.log('═'.repeat(50));\nconsole.log(data.report);\nconsole.log('═'.repeat(50));\n\nreturn {\n  json: {\n    alert_type: 'SECURITY_RISK',\n    severity: data.statistics.critical_ports > 0 ? 'CRITICAL' : 'HIGH',\n    target: data.target,\n    critical_count: data.statistics.critical_ports,\n    high_count: data.statistics.high_ports,\n    report: data.report,\n    timestamp: data.scan_time,\n    action_required: true\n  }\n};"
+      },
+      "id": "send-alert",
+      "name": "🚨 보안 알림",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300],
+      "notes": "Slack/Email 연동 지점"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nconsole.log('\\n✅ 스캔 정상 완료');\nconsole.log('─'.repeat(50));\nconsole.log(data.report);\nconsole.log('─'.repeat(50));\n\nreturn {\n  json: {\n    status: 'OK',\n    target: data.target,\n    open_ports: data.statistics.open_ports,\n    report: data.report,\n    timestamp: data.scan_time\n  }\n};"
+      },
+      "id": "normal-report",
+      "name": "✅ 정상 리포트",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 500],
+      "notes": "정상 로그 기록"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "summary",
+              "name": "scan_summary",
+              "value": "={{ $json.alert_type || $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "target",
+              "name": "target",
+              "value": "={{ $json.target }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "completed_at",
+              "value": "={{ $json.timestamp }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "merge-results",
+      "name": "최종 결과",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1560, 400],
+      "notes": "DB 저장 또는 리포트 전송"
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "스캔 대상 설정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "스캔 대상 설정": {
+      "main": [
+        [
+          {
+            "node": "Nmap 스캔",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nmap 스캔": {
+      "main": [
+        [
+          {
+            "node": "결과 분석",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "결과 분석": {
+      "main": [
+        [
+          {
+            "node": "알림 필요?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "알림 필요?": {
+      "main": [
+        [
+          {
+            "node": "🚨 보안 알림",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "✅ 정상 리포트",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚨 보안 알림": {
+      "main": [
+        [
+          {
+            "node": "최종 결과",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ 정상 리포트": {
+      "main": [
+        [
+          {
+            "node": "최종 결과",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "pinData": {},
+  "versionId": "1"
+}

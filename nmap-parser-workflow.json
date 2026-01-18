@@ -1,0 +1,136 @@
+{
+  "name": "Nmap Scanner with Real Parser",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "command": "nmap -sV -p 22,80,443,3306,3389,5678 -oX - localhost",
+        "options": {}
+      },
+      "id": "nmap-scan",
+      "name": "Nmap XML Output",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "notes": "XML 형식으로 출력 (-oX -)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== parse-nmap.js 핵심 로직 =====\n\n// Nmap 결과 가져오기\nconst nmapOutput = $input.first().json.stdout;\n\n// 간소화된 XML 파싱 (정규표현식 기반)\nfunction parseNmapXML(xmlData) {\n  const hosts = [];\n  \n  // <host> 블록 추출\n  const hostRegex = /<host[^>]*>([\\s\\S]*?)<\\/host>/g;\n  let hostMatch;\n  \n  while ((hostMatch = hostRegex.exec(xmlData)) !== null) {\n    const hostBlock = hostMatch[1];\n    \n    // 호스트 상태 확인\n    const stateMatch = /<status\\s+state=\"([^\"]+)\"/.exec(hostBlock);\n    if (!stateMatch || stateMatch[1] !== 'up') {\n      continue;\n    }\n    \n    // IP 주소\n    const addressMatch = /<address\\s+addr=\"([^\"]+)\"\\s+addrtype=\"ipv4\"/.exec(hostBlock);\n    const ip = addressMatch ? addressMatch[1] : 'unknown';\n    \n    // 포트 파싱\n    const ports = [];\n    const portRegex = /<port\\s+protocol=\"([^\"]+)\"\\s+portid=\"([^\"]+)\">([\\s\\S]*?)<\\/port>/g;\n    let portMatch;\n    \n    while ((portMatch = portRegex.exec(hostBlock)) !== null) {\n      const protocol = portMatch[1];\n      const portid = portMatch[2];\n      const portBlock = portMatch[3];\n      \n      // 포트 상태\n      const portStateMatch = /<state\\s+state=\"([^\"]+)\"/.exec(portBlock);\n      const state = portStateMatch ? portStateMatch[1] : 'unknown';\n      \n      // 서비스 정보\n      const serviceMatch = /<service\\s+name=\"([^\"]+)\"(?:\\s+product=\"([^\"]*)\")? ?\\/?>/.exec(portBlock);\n      const service = serviceMatch ? serviceMatch[1] : 'unknown';\n      const product = serviceMatch && serviceMatch[2] ? serviceMatch[2] : '';\n      \n      // 위험도 평가\n      const criticalPorts = ['22', '23', '3389', '5900'];\n      const dbPorts = ['3306', '5432', '1433', '27017'];\n      let risk_level = 'low';\n      \n      if (criticalPorts.includes(portid)) {\n        risk_level = 'critical';\n      } else if (dbPorts.includes(portid)) {\n        risk_level = 'high';\n      } else if (['80', '443', '8080'].includes(portid)) {\n        risk_level = 'medium';\n      }\n      \n      ports.push({\n        port: parseInt(portid),\n        protocol: protocol,\n        state: state,\n        service: service,\n        product: product,\n        risk_level: risk_level\n      });\n    }\n    \n    hosts.push({\n      ip: ip,\n      state: 'up',\n      ports: ports,\n      open_ports_count: ports.filter(p => p.state === 'open').length\n    });\n  }\n  \n  return hosts;\n}\n\n// 통계 생성\nfunction generateStatistics(hosts) {\n  let totalPorts = 0;\n  let openPorts = 0;\n  let criticalPorts = 0;\n  let highPorts = 0;\n  \n  hosts.forEach(host => {\n    host.ports.forEach(port => {\n      totalPorts++;\n      if (port.state === 'open') {\n        openPorts++;\n        if (port.risk_level === 'critical') criticalPorts++;\n        else if (port.risk_level === 'high') highPorts++;\n      }\n    });\n  });\n  \n  return {\n    total_hosts: hosts.length,\n    total_ports: totalPorts,\n    open_ports: openPorts,\n    critical_ports: criticalPorts,\n    high_ports: highPorts\n  };\n}\n\n// Slack 메시지 생성\nfunction generateSlackMessage(hosts, stats) {\n  let message = `🤖 *Nmap 스캔 완료*\\n\\n`;\n  message += `*총 호스트:* ${stats.total_hosts}대\\n`;\n  message += `*열린 포트:* ${stats.open_ports}개\\n`;\n  message += `🔴 *Critical:* ${stats.critical_ports}개\\n`;\n  message += `🟠 *High:* ${stats.high_ports}개\\n\\n`;\n  \n  if (stats.critical_ports > 0 || stats.high_ports > 0) {\n    message += `*⚠️ 주의 필요 포트:*\\n`;\n    hosts.forEach(host => {\n      const dangerousPorts = host.ports.filter(p => \n        p.state === 'open' && (p.risk_level === 'critical' || p.risk_level === 'high')\n      );\n      \n      if (dangerousPorts.length > 0) {\n        message += `\\n• *${host.ip}*\\n`;\n        dangerousPorts.forEach(port => {\n          message += `  - Port ${port.port}/${port.protocol}: ${port.service} [${port.risk_level.toUpperCase()}]\\n`;\n        });\n      }\n    });\n  }\n  \n  message += `\\n_스캔 시간: ${new Date().toLocaleString('ko-KR')}_`;\n  \n  return message;\n}\n\n// 메인 실행\ntry {\n  const hosts = parseNmapXML(nmapOutput);\n  const statistics = generateStatistics(hosts);\n  const slackMessage = generateSlackMessage(hosts, statistics);\n  \n  return {\n    json: {\n      success: true,\n      scan_time: new Date().toISOString(),\n      statistics: statistics,\n      hosts: hosts,\n      slack_message: slackMessage,\n      critical_hosts: hosts.filter(h => \n        h.ports.some(p => p.state === 'open' && p.risk_level === 'critical')\n      )\n    }\n  };\n  \n} catch (error) {\n  return {\n    json: {\n      success: false,\n      error: error.message,\n      timestamp: new Date().toISOString()\n    }\n  };\n}"
+      },
+      "id": "parse-nmap",
+      "name": "Parse Nmap (Real Logic)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "notes": "parse-nmap.js 로직 실행"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.statistics.critical_ports }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "check-critical",
+      "name": "Critical 포트 있나?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Critical 포트 발견 시 경고 메시지\nconst data = $input.first().json;\n\nconsole.log('⚠️ CRITICAL 포트 발견!');\nconsole.log(data.slack_message);\n\nreturn {\n  json: {\n    alert: 'CRITICAL',\n    message: data.slack_message,\n    critical_count: data.statistics.critical_ports,\n    critical_hosts: data.critical_hosts\n  }\n};"
+      },
+      "id": "alert-critical",
+      "name": "⚠️ Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 200],
+      "notes": "Critical 발견 시"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 정상 - Critical 없음\nconst data = $input.first().json;\n\nconsole.log('✅ Critical 포트 없음');\nconsole.log(data.slack_message);\n\nreturn {\n  json: {\n    status: 'OK',\n    message: data.slack_message,\n    statistics: data.statistics\n  }\n};"
+      },
+      "id": "no-alert",
+      "name": "✅ OK",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 400],
+      "notes": "정상"
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Nmap XML Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nmap XML Output": {
+      "main": [
+        [
+          {
+            "node": "Parse Nmap (Real Logic)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Nmap (Real Logic)": {
+      "main": [
+        [
+          {
+            "node": "Critical 포트 있나?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critical 포트 있나?": {
+      "main": [
+        [
+          {
+            "node": "⚠️ Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "✅ OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "pinData": {},
+  "versionId": "1"
+}

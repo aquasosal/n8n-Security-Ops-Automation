@@ -1,0 +1,67 @@
+{
+  "name": "Simple Nmap Test",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "command": "nmap -sV -p 80,443 localhost",
+        "options": {}
+      },
+      "id": "nmap-scan",
+      "name": "Nmap Localhost Scan",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "notes": "안전한 localhost 스캔"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nmap 결과 출력 확인\nconst output = $input.first().json;\n\nconsole.log('=== Nmap Scan Result ===');\nconsole.log(output.stdout || output.stderr);\n\nreturn {\n  json: {\n    success: true,\n    output: output.stdout || output.stderr,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "display-result",
+      "name": "Display Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "notes": "결과 확인"
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Nmap Localhost Scan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nmap Localhost Scan": {
+      "main": [
+        [
+          {
+            "node": "Display Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "pinData": {},
+  "versionId": "1"
+}
