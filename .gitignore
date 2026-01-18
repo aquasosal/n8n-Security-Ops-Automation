@@ -38,5 +38,6 @@ scans/
 # screenshots/*.jpg
 tmpclaude-*
 telegram-bot-final.json
+telegram-bot-cve-local.json
 production-workflow-telegram.json
 1.png

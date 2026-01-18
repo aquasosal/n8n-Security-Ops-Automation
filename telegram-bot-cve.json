@@ -1,0 +1,836 @@
+{
+    "name": "Telegram Bot v3 - Chained Scan & CVE",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "seconds",
+                            "secondsInterval": 10
+                        }
+                    ]
+                }
+            },
+            "id": "schedule",
+            "name": "매 10초마다 실행",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1.2,
+            "position": [
+                240,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/getUpdates?timeout=0&limit=10",
+                "options": {}
+            },
+            "id": "get-updates",
+            "name": "새 메시지 확인",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                460,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "const response = $input.first().json;\n\nif (!response.result || response.result.length === 0) {\n  return [];\n}\n\nconst updates = response.result;\nconst messages = [];\nlet maxUpdateId = 0;\n\nfor (const update of updates) {\n  if (update.update_id > maxUpdateId) {\n    maxUpdateId = update.update_id;\n  }\n}\n\nconst lastUpdate = updates[updates.length - 1];\n\nif (lastUpdate && lastUpdate.message && lastUpdate.message.text) {\n  const text = lastUpdate.message.text;\n  const chatId = lastUpdate.message.chat.id;\n  \n  if (text.startsWith('/scan')) {\n    const parts = text.split(' ');\n    let target = parts.length > 1 ? parts[1].trim() : 'localhost';\n    target = target.replace(/[^a-zA-Z0-9.:-]/g, '');\n    \n    messages.push({\n      json: {\n        chat_id: chatId,\n        target: target,\n        scan_id: Date.now(),\n        command: 'scan',\n        confirm_offset: maxUpdateId + 1\n      }\n    });\n  } else if (text.startsWith('/cve')) {\n    const parts = text.split(' ');\n    let keyword = parts.length > 1 ? parts[1].trim() : 'all';\n    \n    messages.push({\n      json: {\n        chat_id: chatId,\n        keyword: keyword,\n        scan_id: Date.now(),\n        command: 'cve',\n        confirm_offset: maxUpdateId + 1\n      }\n    });\n  } else if (text === '/help' || text === '/start') {\n    messages.push({\n      json: {\n        chat_id: chatId,\n        command: 'help',\n        confirm_offset: maxUpdateId + 1\n      }\n    });\n  }\n}\n\nreturn messages;"
+            },
+            "id": "parse-messages",
+            "name": "메시지 파싱",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                680,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "string": [
+                        {
+                            "value1": "={{ $json.command }}",
+                            "value2": "scan"
+                        }
+                    ]
+                }
+            },
+            "id": "check-scan",
+            "name": "스캔 명령인가?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                900,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "string": [
+                        {
+                            "value1": "={{ $json.command }}",
+                            "value2": "cve"
+                        }
+                    ]
+                }
+            },
+            "id": "check-cve",
+            "name": "CVE 명령인가?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                900,
+                600
+            ]
+        },
+        {
+            "parameters": {
+                "url": "=https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/getUpdates?offset={{ $json.confirm_offset }}&timeout=0",
+                "options": {}
+            },
+            "id": "confirm-offset-scan",
+            "name": "메시지 확인(Scan)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1120,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "url": "=https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/getUpdates?offset={{ $json.confirm_offset }}&timeout=0",
+                "options": {}
+            },
+            "id": "confirm-offset-cve",
+            "name": "메시지 확인(CVE)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1120,
+                600
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+                "sendBody": true,
+                "contentType": "form-urlencoded",
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "chat_id",
+                            "value": "={{ $('메시지 파싱').item.json.chat_id }}"
+                        },
+                        {
+                            "name": "text",
+                            "value": "={{ 'CVE 검색 시작\\n\\n키워드: ' + $('메시지 파싱').item.json.keyword + '\\n\\n데이터베이스 조회 중... (잠시만 기다려주세요)' }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "send-cve-start",
+            "name": "CVE 시작 알림",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1340,
+                600
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://services.nvd.nist.gov/rest/json/cves/2.0",
+                "authentication": "none",
+                "options": {
+                    "queryParameters": {
+                        "parameters": [
+                            {
+                                "name": "resultsPerPage",
+                                "value": "10"
+                            },
+                            {
+                                "name": "keywordSearch",
+                                "value": "={{ $json.keyword || $('메시지 파싱').item.json.keyword }}"
+                            },
+                            {
+                                "name": "pubStartDate",
+                                "value": "={{ $now.minus(180, 'days').toFormat('yyyy-MM-dd\\'T\\'00:00:00') }}"
+                            },
+                            {
+                                "name": "pubEndDate",
+                                "value": "={{ $now.toFormat('yyyy-MM-dd\\'T\\'23:59:59') }}"
+                            }
+                        ]
+                    }
+                }
+            },
+            "id": "nvd-api",
+            "name": "NVD API 조회",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                1560,
+                600
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "const response = $input.first().json;\nconst keyword = $input.first().json.keyword || $('메시지 파싱').item.json.keyword;\n\nif (!response.vulnerabilities || response.vulnerabilities.length === 0) {\n  return {\n    json: {\n      telegram_message: `🔍 검색 결과: '${keyword}'에 대한 최근 CVE가 없습니다.`\n    }\n  };\n}\n\nlet msg = `🔥 '${keyword}' 관련 최근 중요 CVE (상위 5개):\\n\\n`;\nconst vulns = response.vulnerabilities;\n\nlet count = 0;\nfor (const v of vulns) {\n  if (count >= 5) break;\n  const cve = v.cve;\n  const id = cve.id;\n  const metrics = cve.metrics;\n  let score = 'N/A';\n  let severity = 'UNKNOWN';\n  \n  if (metrics.cvssMetricV31) {\n    score = metrics.cvssMetricV31[0].cvssData.baseScore;\n    severity = metrics.cvssMetricV31[0].cvssData.baseSeverity;\n  } else if (metrics.cvssMetricV30) {\n    score = metrics.cvssMetricV30[0].cvssData.baseScore;\n    severity = metrics.cvssMetricV30[0].cvssData.baseSeverity;\n  } else if (metrics.cvssMetricV2) {\n    score = metrics.cvssMetricV2[0].cvssData.baseScore;\n    severity = 'V2';\n  }\n  \n  const description = cve.descriptions.find(d => d.lang === 'en').value;\n  \n  msg += `🔴 *${id}* (Score: ${score} - ${severity})\\n`;\n  msg += `📝 ${description.substring(0, 100)}...\\n`;\n  msg += `🔗 https://nvd.nist.gov/vuln/detail/${id}\\n\\n`;\n  \n  count++;\n}\n\nmsg += `📅 조회 기간: 최근 6개월`;\n\nreturn {\n  json: {\n    telegram_message: msg\n  }\n};"
+            },
+            "id": "parse-cve-result",
+            "name": "CVE 결과 분석",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1780,
+                600
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+                "sendBody": true,
+                "contentType": "form-urlencoded",
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "chat_id",
+                            "value": "={{ $('메시지 파싱').item.json.chat_id }}"
+                        },
+                        {
+                            "name": "text",
+                            "value": "={{ $json.telegram_message }}"
+                        },
+                        {
+                            "name": "parse_mode",
+                            "value": "Markdown"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "send-cve-result",
+            "name": "CVE 결과 전송",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2000,
+                600
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+                "sendBody": true,
+                "contentType": "form-urlencoded",
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "chat_id",
+                            "value": "={{ $('메시지 파싱').item.json.chat_id }}"
+                        },
+                        {
+                            "name": "text",
+                            "value": "={{ '보안 스캔 시작\\n\\n대상: ' + $('메시지 파싱').item.json.target + '\\n스캔 ID: ' + $('메시지 파싱').item.json.scan_id + '\\n\\n전체 포트(1-65535) 및 서비스 버전 스캔 중... (시간이 오래 걸릴 수 있습니다)' }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "send-start",
+            "name": "스캔 시작 알림",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1340,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "command": "=nmap -sT -sV -p- -T4 --max-retries 1 --host-timeout 60m -oX - {{ $('메시지 파싱').item.json.target }}",
+                "options": {}
+            },
+            "id": "nmap-scan",
+            "name": "Nmap 전체 포트 스캔",
+            "type": "n8n-nodes-base.executeCommand",
+            "typeVersion": 1,
+            "position": [
+                1560,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "target",
+                            "name": "target",
+                            "value": "={{ $('메시지 파싱').item.json.target }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "scan_id",
+                            "name": "scan_id",
+                            "value": "={{ $('메시지 파싱').item.json.scan_id }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "chat_id",
+                            "name": "chat_id",
+                            "value": "={{ $('메시지 파싱').item.json.chat_id }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "nmap_result",
+                            "name": "nmap_result",
+                            "value": "={{ $json.stdout }}",
+                            "type": "string"
+                        }
+                    ]
+                }
+            },
+            "id": "save-nmap",
+            "name": "Nmap 저장",
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                1780,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "command": "=sslscan --no-colour {{ $json.target }}:443 2>&1 || echo 'SSL scan completed'",
+                "options": {}
+            },
+            "id": "sslscan",
+            "name": "SSLScan",
+            "type": "n8n-nodes-base.executeCommand",
+            "typeVersion": 1,
+            "position": [
+                2000,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "target",
+                            "name": "target",
+                            "value": "={{ $('Nmap 저장').item.json.target }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "scan_id",
+                            "name": "scan_id",
+                            "value": "={{ $('Nmap 저장').item.json.scan_id }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "chat_id",
+                            "name": "chat_id",
+                            "value": "={{ $('Nmap 저장').item.json.chat_id }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "nmap_result",
+                            "name": "nmap_result",
+                            "value": "={{ $('Nmap 저장').item.json.nmap_result }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "sslscan_result",
+                            "name": "sslscan_result",
+                            "value": "={{ $json.stdout || $json.stderr }}",
+                            "type": "string"
+                        }
+                    ]
+                }
+            },
+            "id": "save-ssl",
+            "name": "SSL 저장",
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                2220,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "const nmapOutput = $input.first().json.nmap_result;\nconst sslscanOutput = $input.first().json.sslscan_result;\n\nfunction parseNmapXML(xmlData) {\n  const hosts = [];\n  if (!xmlData || typeof xmlData !== 'string') return [];\n  \n  const hostRegex = /<host[^>]*>([\\s\\S]*?)<\\/host>/g;\n  let hostMatch;\n  \n  while ((hostMatch = hostRegex.exec(xmlData)) !== null) {\n    const hostBlock = hostMatch[1];\n    const stateMatch = /<status\\s+state=\"([^\"]+)\"/.exec(hostBlock);\n    if (!stateMatch || stateMatch[1] !== 'up') continue;\n    \n    const addressMatch = /<address\\s+addr=\"([^\"]+)\"\\s+addrtype=\"ipv4\"/.exec(hostBlock);\n    const ip = addressMatch ? addressMatch[1] : 'unknown';\n    \n    const ports = [];\n    const portRegex = /<port\\s+protocol=\"([^\"]+)\"\\s+portid=\"([^\"]+)\">([\\s\\S]*?)<\\/port>/g;\n    let portMatch;\n    \n    while ((portMatch = portRegex.exec(hostBlock)) !== null) {\n      const protocol = portMatch[1];\n      const portid = portMatch[2];\n      const portBlock = portMatch[3];\n      \n      const portStateMatch = /<state\\s+state=\"([^\"]+)\"/.exec(portBlock);\n      const state = portStateMatch ? portStateMatch[1] : 'unknown';\n      \n      const serviceMatch = /<service\\s+name=\"([^\"]+)\"(?:[^>]*\\sproduct=\"([^\"]*)\")?(?:[^>]*\\sversion=\"([^\"]*)\")?[^>]*>/.exec(portBlock);\n      const service = serviceMatch ? serviceMatch[1] : 'unknown';\n      const product = serviceMatch && serviceMatch[2] ? serviceMatch[2] : '';\n      const version = serviceMatch && serviceMatch[3] ? serviceMatch[3] : '';\n      \n      const criticalPorts = ['22', '23', '3389', '5900', '445'];\n      const dbPorts = ['3306', '5432', '1433', '27017', '6379'];\n      let risk_level = 'low';\n      \n      if (criticalPorts.includes(portid)) risk_level = 'critical';\n      else if (dbPorts.includes(portid)) risk_level = 'high';\n      else if (['80', '443', '8080', '8443'].includes(portid)) risk_level = 'medium';\n      \n      ports.push({ port: parseInt(portid), protocol, state, service, product, version, risk_level });\n    }\n    \n    hosts.push({ ip, state: 'up', ports, open_ports_count: ports.filter(p => p.state === 'open').length });\n  }\n  return hosts;\n}\n\nfunction parseSSLScan(output) {\n  let vulnCount = 0;\n  if (!output || typeof output !== 'string') return { vulnerabilities: 0 };\n  if (output.includes('SSLv2') || output.includes('SSLv3')) vulnCount++;\n  if (output.includes('TLS 1.0') || output.includes('TLS 1.1')) vulnCount++;\n  return { vulnerabilities: vulnCount };\n}\n\nconst hosts = parseNmapXML(nmapOutput);\n\n// Extract unique products found\nconst foundProducts = new Set();\nhosts.forEach(h => {\n  h.ports.forEach(p => {\n    if (p.product && p.product.length > 2) {\n      const cleanProduct = p.product.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ')[0]; // Simple keyword extraction\n      foundProducts.add(cleanProduct);\n    }\n  });\n});\nconst productsList = Array.from(foundProducts).slice(0, 3); // Limit to top 3 to keep API calls low\n\nconst nmapStats = {\n  open_ports: hosts.reduce((sum, h) => sum + h.open_ports_count, 0),\n  critical_ports: hosts.reduce((sum, h) => sum + h.ports.filter(p => p.state === 'open' && p.risk_level === 'critical').length, 0),\n  high_ports: hosts.reduce((sum, h) => sum + h.ports.filter(p => p.state === 'open' && p.risk_level === 'high').length, 0),\n  medium_ports: hosts.reduce((sum, h) => sum + h.ports.filter(p => p.state === 'open' && p.risk_level === 'medium').length, 0)\n};\n\nconst sslData = parseSSLScan(sslscanOutput);\nconst totalIssues = nmapStats.critical_ports + nmapStats.high_ports + sslData.vulnerabilities;\n\n// Construct message\nlet msg = '🔎 보안 스캔 완료 (Nmap + CVE)\\n';\nmsg += '대상: ' + $input.first().json.target + '\\n';\nmsg += '시간: ' + new Date().toLocaleString('ko-KR') + '\\n\\n';\nmsg += '📊 Nmap 결과\\n';\nmsg += '열린 포트: ' + nmapStats.open_ports + '개\\n';\nmsg += 'Critical: ' + nmapStats.critical_ports + '개\\n';\nmsg += 'High: ' + nmapStats.high_ports + '개\\n\\n';\n\n// Host details\nif (totalIssues > 0 || nmapStats.open_ports > 0) {\n    let count = 0;\n    for (const host of hosts) {\n      msg += '🖥 ' + host.ip + ' 서비스:\\n';\n      for (const port of host.ports) {\n        if (count >= 15) break;\n        if (port.state === 'open') {\n             msg += `• ${port.port}/${port.protocol} - ${port.service}`;\n             if (port.product) msg += ` (${port.product} ${port.version})`;\n             msg += '\\n';\n             count++;\n        }\n      }\n      if (count >= 15) { msg += '... (생략)\\n'; break; }\n    }\n}\n\nmsg += '\\n🛡 관련 CVE 검색 예정 항목:\\n';\nif (productsList.length > 0) {\n    msg += productsList.map(p => `- ${p}`).join('\\n');\n} else {\n    msg += '(식별된 주요 제품 없음)';\n}\n\n// Pass products to next node for looping\nconst outputItems = [];\nif (productsList.length === 0) {\n    outputItems.push({ \n        json: { \n            keyword: 'TOP_LEVEL_SKIP', \n            base_message: msg, \n            chat_id: $input.first().json.chat_id, \n            is_last: true \n        } \n    });\n} else {\n    productsList.forEach((prod, index) => {\n        outputItems.push({ \n            json: { \n                keyword: prod, \n                base_message: msg, \n                chat_id: $input.first().json.chat_id, \n                is_last: index === productsList.length - 1,\n                hosts_json: hosts // Propagate details if needed\n            } \n        });\n    });\n}\n\nreturn outputItems;"
+            },
+            "id": "parse-scan-result",
+            "name": "스캔 및 서비스 추출",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2440,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "string": [
+                        {
+                            "value1": "={{ $json.keyword }}",
+                            "value2": "TOP_LEVEL_SKIP"
+                        }
+                    ]
+                }
+            },
+            "id": "check-skip",
+            "name": "CVE 검색 필요?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                2660,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://services.nvd.nist.gov/rest/json/cves/2.0",
+                "authentication": "none",
+                "options": {
+                    "queryParameters": {
+                        "parameters": [
+                            {
+                                "name": "resultsPerPage",
+                                "value": "3"
+                            },
+                            {
+                                "name": "keywordSearch",
+                                "value": "={{ $json.keyword }}"
+                            },
+                            {
+                                "name": "pubStartDate",
+                                "value": "={{ $now.minus(90, 'days').toFormat('yyyy-MM-dd\\'T\\'00:00:00') }}"
+                            },
+                            {
+                                "name": "pubEndDate",
+                                "value": "={{ $now.toFormat('yyyy-MM-dd\\'T\\'23:59:59') }}"
+                            }
+                        ]
+                    }
+                }
+            },
+            "id": "nvd-api-auto",
+            "name": "NVD API (자동)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                2880,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "const response = $input.item.json;\nconst startData = $('스캔 및 서비스 추출').item.json;\nconst keyword = $input.item.json.keyword || startData.keyword;\nconst vulns = response.vulnerabilities || [];\n\n// Generate CVE report snippet\nlet cveReport = '';\nif (vulns.length > 0) {\n    cveReport += `\\n🔴 ${keyword} 위협 정보:\\n`;\n    vulns.slice(0, 2).forEach(v => {\n        const cve = v.cve;\n        cveReport += `- ${cve.id} (CVSS: ${cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || 'N/A'})\\n`;\n    });\n} else {\n    cveReport += `\\n🟢 ${keyword}: 최근 90일 내 발견된 취약점 없음\\n`;\n}\n\n// We need to return valid JSON for aggregation\nreturn { \n    json: { \n        cveReport, \n        base_message: startData.base_message, \n        chat_id: startData.chat_id \n    } \n};"
+            },
+            "id": "format-cve-auto",
+            "name": "CVE 포맷팅",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                3100,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "aggregateItems",
+                "fieldsToAggregate": {
+                    "fieldToAggregate": [
+                        {
+                            "fieldToAggregate": "cveReport"
+                        },
+                        {
+                            "fieldToAggregate": "base_message"
+                        },
+                        {
+                            "fieldToAggregate": "chat_id"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "aggregate-reports",
+            "name": "보고서 병합",
+            "type": "n8n-nodes-base.itemLists",
+            "typeVersion": 3,
+            "position": [
+                3320,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "const items = $input.first().json;\nconst baseMsg = items.base_message[0]; // All items have same base info\nconst chatId = items.chat_id[0];\nconst reports = items.cveReport;\n\nlet finalMsg = baseMsg + '\\n════ CVE 분석 결과 ════\\n';\nreports.forEach(r => { finalMsg += r; });\n\nreturn { json: { telegram_message: finalMsg, chat_id: chatId } };"
+            },
+            "id": "finalize-message",
+            "name": "최종 완성",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                3540,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+                "sendBody": true,
+                "contentType": "form-urlencoded",
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "chat_id",
+                            "value": "={{ $json.chat_id }}"
+                        },
+                        {
+                            "name": "text",
+                            "value": "={{ $json.telegram_message }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "send-final-result",
+            "name": "최종 결과 전송",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                3760,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+                "sendBody": true,
+                "contentType": "form-urlencoded",
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "chat_id",
+                            "value": "={{ $json.chat_id }}"
+                        },
+                        {
+                            "name": "text",
+                            "value": "={{ $json.base_message + '\\n(식별된 소프트웨어가 없어 CVE 검색을 건너뜁니다)' }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "send-no-cve",
+            "name": "전송 (CVE 없음)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2880,
+                450
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+                "sendBody": true,
+                "contentType": "form-urlencoded",
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "chat_id",
+                            "value": "={{ $('메시지 파싱').item.json.chat_id }}"
+                        },
+                        {
+                            "name": "text",
+                            "value": "보안 봇 V3\\n\\n🔥 기능:\\n/scan <Target> - 심층 스캔 + CVE 자동 조회\\n/cve <Keyword> - 수동 CVE 검색\\n/help"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "send-help",
+            "name": "도움말 전송",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1120,
+                800
+            ]
+        }
+    ],
+    "connections": {
+        "매 10초마다 실행": {
+            "main": [
+                [
+                    {
+                        "node": "새 메시지 확인",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "새 메시지 확인": {
+            "main": [
+                [
+                    {
+                        "node": "메시지 파싱",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "메시지 파싱": {
+            "main": [
+                [
+                    {
+                        "node": "스캔 명령인가?",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "CVE 명령인가?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "스캔 명령인가?": {
+            "main": [
+                [
+                    {
+                        "node": "메시지 확인(Scan)",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "도움말 전송",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "CVE 명령인가?": {
+            "main": [
+                [
+                    {
+                        "node": "메시지 확인(CVE)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "메시지 확인(Scan)": {
+            "main": [
+                [
+                    {
+                        "node": "스캔 시작 알림",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "메시지 확인(CVE)": {
+            "main": [
+                [
+                    {
+                        "node": "CVE 시작 알림",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "스캔 시작 알림": {
+            "main": [
+                [
+                    {
+                        "node": "Nmap 전체 포트 스캔",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Nmap 전체 포트 스캔": {
+            "main": [
+                [
+                    {
+                        "node": "Nmap 저장",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Nmap 저장": {
+            "main": [
+                [
+                    {
+                        "node": "SSLScan",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "SSLScan": {
+            "main": [
+                [
+                    {
+                        "node": "SSL 저장",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "SSL 저장": {
+            "main": [
+                [
+                    {
+                        "node": "스캔 및 서비스 추출",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "스캔 및 서비스 추출": {
+            "main": [
+                [
+                    {
+                        "node": "check-skip",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "check-skip": {
+            "main": [
+                [
+                    {
+                        "node": "send-no-cve",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "NVD API (자동)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "NVD API (자동)": {
+            "main": [
+                [
+                    {
+                        "node": "CVE 포맷팅",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "CVE 포맷팅": {
+            "main": [
+                [
+                    {
+                        "node": "보고서 병합",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "보고서 병합": {
+            "main": [
+                [
+                    {
+                        "node": "최종 완성",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "최종 완성": {
+            "main": [
+                [
+                    {
+                        "node": "최종 결과 전송",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "CVE 시작 알림": {
+            "main": [
+                [
+                    {
+                        "node": "NVD API 조회",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "NVD API 조회": {
+            "main": [
+                [
+                    {
+                        "node": "CVE 결과 분석",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "CVE 결과 분석": {
+            "main": [
+                [
+                    {
+                        "node": "CVE 결과 전송",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    }
+}
