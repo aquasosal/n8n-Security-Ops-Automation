@@ -1,0 +1,433 @@
+{
+  "name": "Telegram Bot Full Port Scanner",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "schedule",
+      "name": "매 30초마다 실행",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/getUpdates?timeout=5&limit=10",
+        "options": {}
+      },
+      "id": "get-updates",
+      "name": "새 메시지 확인",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n\nif (!response.result || response.result.length === 0) {\n  return [];\n}\n\nconst updates = response.result;\nconst messages = [];\nlet maxUpdateId = 0;\n\nfor (const update of updates) {\n  if (update.update_id > maxUpdateId) {\n    maxUpdateId = update.update_id;\n  }\n}\n\nconst lastUpdate = updates[updates.length - 1];\n\nif (lastUpdate && lastUpdate.message && lastUpdate.message.text) {\n  const text = lastUpdate.message.text;\n  const chatId = lastUpdate.message.chat.id;\n  \n  if (text.startsWith('/scan')) {\n    const parts = text.split(' ');\n    let target = parts.length > 1 ? parts[1].trim() : 'localhost';\n    target = target.replace(/[^a-zA-Z0-9.:-]/g, '');\n    \n    messages.push({\n      json: {\n        chat_id: chatId,\n        target: target,\n        scan_id: Date.now(),\n        command: 'scan',\n        confirm_offset: maxUpdateId + 1\n      }\n    });\n  } else if (text === '/help' || text === '/start') {\n    messages.push({\n      json: {\n        chat_id: chatId,\n        command: 'help',\n        confirm_offset: maxUpdateId + 1\n      }\n    });\n  }\n}\n\nreturn messages;"
+      },
+      "id": "parse-messages",
+      "name": "메시지 파싱",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $('메시지 파싱').item.json.command }}",
+              "value2": "scan"
+            }
+          ]
+        }
+      },
+      "id": "check-command",
+      "name": "스캔 명령인가?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $('메시지 파싱').item.json.chat_id }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ '보안 스캔 시작\\n\\n대상: ' + $('메시지 파싱').item.json.target + '\\n스캔 ID: ' + $('메시지 파싱').item.json.scan_id + '\\n\\n전체 포트(1-65535) 스캔 중... (시간이 오래 걸릴 수 있습니다)' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "send-start",
+      "name": "스캔 시작 알림",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=nmap -sS -p- --max-retries 1 --host-timeout 60m -oX - {{ $('메시지 파싱').item.json.target }}",
+        "options": {}
+      },
+      "id": "nmap-scan",
+      "name": "Nmap 전체 포트 스캔",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "target",
+              "name": "target",
+              "value": "={{ $('메시지 파싱').item.json.target }}",
+              "type": "string"
+            },
+            {
+              "id": "scan_id",
+              "name": "scan_id",
+              "value": "={{ $('메시지 파싱').item.json.scan_id }}",
+              "type": "string"
+            },
+            {
+              "id": "chat_id",
+              "name": "chat_id",
+              "value": "={{ $('메시지 파싱').item.json.chat_id }}",
+              "type": "string"
+            },
+            {
+              "id": "nmap_result",
+              "name": "nmap_result",
+              "value": "={{ $json.stdout }}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "save-nmap",
+      "name": "Nmap 저장",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=sslscan --no-colour {{ $json.target }}:443 2>&1 || echo 'SSL scan completed'",
+        "options": {}
+      },
+      "id": "sslscan",
+      "name": "SSLScan",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "target",
+              "name": "target",
+              "value": "={{ $('Nmap 저장').item.json.target }}",
+              "type": "string"
+            },
+            {
+              "id": "scan_id",
+              "name": "scan_id",
+              "value": "={{ $('Nmap 저장').item.json.scan_id }}",
+              "type": "string"
+            },
+            {
+              "id": "chat_id",
+              "name": "chat_id",
+              "value": "={{ $('Nmap 저장').item.json.chat_id }}",
+              "type": "string"
+            },
+            {
+              "id": "nmap_result",
+              "name": "nmap_result",
+              "value": "={{ $('Nmap 저장').item.json.nmap_result }}",
+              "type": "string"
+            },
+            {
+              "id": "sslscan_result",
+              "name": "sslscan_result",
+              "value": "={{ $json.stdout || $json.stderr }}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "save-ssl",
+      "name": "SSL 저장",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const nmapOutput = $input.first().json.nmap_result;\nconst sslscanOutput = $input.first().json.sslscan_result;\n\nfunction parseNmapXML(xmlData) {\n  const hosts = [];\n  if (!xmlData || typeof xmlData !== 'string') return [];\n  \n  const hostRegex = /<host[^>]*>([\\s\\S]*?)<\\/host>/g;\n  let hostMatch;\n  \n  while ((hostMatch = hostRegex.exec(xmlData)) !== null) {\n    const hostBlock = hostMatch[1];\n    const stateMatch = /<status\\s+state=\"([^\"]+)\"/.exec(hostBlock);\n    if (!stateMatch || stateMatch[1] !== 'up') continue;\n    \n    const addressMatch = /<address\\s+addr=\"([^\"]+)\"\\s+addrtype=\"ipv4\"/.exec(hostBlock);\n    const ip = addressMatch ? addressMatch[1] : 'unknown';\n    \n    const ports = [];\n    const portRegex = /<port\\s+protocol=\"([^\"]+)\"\\s+portid=\"([^\"]+)\">([\\s\\S]*?)<\\/port>/g;\n    let portMatch;\n    \n    while ((portMatch = portRegex.exec(hostBlock)) !== null) {\n      const protocol = portMatch[1];\n      const portid = portMatch[2];\n      const portBlock = portMatch[3];\n      \n      const portStateMatch = /<state\\s+state=\"([^\"]+)\"/.exec(portBlock);\n      const state = portStateMatch ? portStateMatch[1] : 'unknown';\n      \n      const serviceMatch = /<service\\s+name=\"([^\"]+)\"(?:\\s+product=\"([^\"]*)\")? ?\\/?>/.exec(portBlock);\n      const service = serviceMatch ? serviceMatch[1] : 'unknown';\n      \n      const criticalPorts = ['22', '23', '3389', '5900', '445'];\n      const dbPorts = ['3306', '5432', '1433', '27017', '6379'];\n      let risk_level = 'low';\n      \n      if (criticalPorts.includes(portid)) risk_level = 'critical';\n      else if (dbPorts.includes(portid)) risk_level = 'high';\n      else if (['80', '443', '8080', '8443'].includes(portid)) risk_level = 'medium';\n      \n      ports.push({ port: parseInt(portid), protocol, state, service, risk_level });\n    }\n    \n    hosts.push({ ip, state: 'up', ports, open_ports_count: ports.filter(p => p.state === 'open').length });\n  }\n  return hosts;\n}\n\nfunction parseSSLScan(output) {\n  let vulnCount = 0;\n  if (!output || typeof output !== 'string') return { vulnerabilities: 0 };\n  if (output.includes('SSLv2') || output.includes('SSLv3')) vulnCount++;\n  if (output.includes('TLS 1.0') || output.includes('TLS 1.1')) vulnCount++;\n  return { vulnerabilities: vulnCount };\n}\n\nconst hosts = parseNmapXML(nmapOutput);\nconst nmapStats = {\n  open_ports: hosts.reduce((sum, h) => sum + h.open_ports_count, 0),\n  critical_ports: hosts.reduce((sum, h) => sum + h.ports.filter(p => p.state === 'open' && p.risk_level === 'critical').length, 0),\n  high_ports: hosts.reduce((sum, h) => sum + h.ports.filter(p => p.state === 'open' && p.risk_level === 'high').length, 0),\n  medium_ports: hosts.reduce((sum, h) => sum + h.ports.filter(p => p.state === 'open' && p.risk_level === 'medium').length, 0)\n};\n\nconst sslData = parseSSLScan(sslscanOutput);\nconst totalIssues = nmapStats.critical_ports + nmapStats.high_ports + sslData.vulnerabilities;\n\nlet msg = '보안 스캔 완료\\n';\nmsg += '대상: ' + $input.first().json.target + '\\n';\nmsg += '시간: ' + new Date().toLocaleString('ko-KR') + '\\n\\n';\nmsg += 'Nmap 결과\\n';\nmsg += '열린 포트: ' + nmapStats.open_ports + '개\\n';\nmsg += 'Critical: ' + nmapStats.critical_ports + '개\\n';\nmsg += 'High: ' + nmapStats.high_ports + '개\\n';\nmsg += 'Medium: ' + nmapStats.medium_ports + '개\\n\\n';\nmsg += 'SSL 취약점: ' + sslData.vulnerabilities + '개\\n\\n';\n\nif (totalIssues === 0) {\n  msg += '심각한 보안 이슈 없음';\n} else {\n  msg += '총 ' + totalIssues + '개 보안 이슈 발견\\n\\n';\n  if (nmapStats.critical_ports > 0 || nmapStats.high_ports > 0) {\n    msg += '위험 포트:\\n';\n    let count = 0;\n    for (const host of hosts) {\n      const dangerPorts = host.ports.filter(p => p.state === 'open' && (p.risk_level === 'critical' || p.risk_level === 'high'));\n      if (dangerPorts.length > 0) {\n        msg += '\\n' + host.ip + ':\\n';\n        for (const port of dangerPorts) {\n          if (count >= 15) break;\n          msg += port.port + '/' + port.protocol + ' - ' + port.service + '\\n';\n          count++;\n        }\n      }\n      if (count >= 15) break;\n    }\n  }\n}\n\nif (msg.length > 4000) {\n  msg = msg.substring(0, 3950) + '\\n(길이 제한)';\n}\n\nreturn {\n  json: {\n    chat_id: $input.first().json.chat_id,\n    telegram_message: msg\n  }\n};"
+      },
+      "id": "parse-all",
+      "name": "결과 분석",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $json.chat_id }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.telegram_message }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "send-result",
+      "name": "결과 전송",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $('메시지 파싱').item.json.chat_id }}"
+            },
+            {
+              "name": "text",
+              "value": "보안 스캔 봇\\n\\n명령어:\\n/scan <대상> - 스캔 실행\\n/help - 도움말"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "send-help",
+      "name": "도움말 전송",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/getUpdates?offset={{ $json.confirm_offset }}&timeout=0",
+        "options": {}
+      },
+      "id": "confirm-offset",
+      "name": "메시지 확인",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2660,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "매 30초마다 실행": {
+      "main": [
+        [
+          {
+            "node": "새 메시지 확인",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "새 메시지 확인": {
+      "main": [
+        [
+          {
+            "node": "메시지 파싱",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "메시지 파싱": {
+      "main": [
+        [
+          {
+            "node": "스캔 명령인가?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "스캔 명령인가?": {
+      "main": [
+        [
+          {
+            "node": "메시지 확인",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "도움말 전송",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "메시지 확인": {
+      "main": [
+        [
+          {
+            "node": "스캔 시작 알림",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "스캔 시작 알림": {
+      "main": [
+        [
+          {
+            "node": "Nmap 전체 포트 스캔",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nmap 전체 포트 스캔": {
+      "main": [
+        [
+          {
+            "node": "Nmap 저장",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nmap 저장": {
+      "main": [
+        [
+          {
+            "node": "SSLScan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SSLScan": {
+      "main": [
+        [
+          {
+            "node": "SSL 저장",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SSL 저장": {
+      "main": [
+        [
+          {
+            "node": "결과 분석",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "결과 분석": {
+      "main": [
+        [
+          {
+            "node": "결과 전송",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

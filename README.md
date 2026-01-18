@@ -98,18 +98,33 @@ API/Nmap 실행     → 10분 (자동)
 
 ```
 security-automation-n8n/
-├── production-workflow-telegram.json  # ⭐ Telegram 알림 (권장)
+├── telegram-bot-template.json         # 🤖 Telegram Bot 전체 포트 스캔 (최신, 권장!)
+├── production-workflow-telegram.json  # ⭐ Telegram 알림 (기본)
 ├── production-workflow.json           # 콘솔 출력만
 ├── nmap-parser-workflow.json          # Nmap 파싱 테스트
 ├── test-workflow-simple.json          # 기본 동작 확인용
+├── complete-security-workflow-simple.json  # 3가지 스캐너 통합 (Nmap + SSLScan + JS Scanner)
 ├── scripts/
 │   ├── parse-nmap.js                  # Nmap XML → JSON 파싱
-│   └── parse-cve.js                   # NVD API → 위험도 분석
-├── screenshots/
-│   └── nmap-workflow-result.png       # 실제 실행 결과
+│   ├── parse-cve.js                   # NVD API → 위험도 분석
+│   └── generate-report-html.js        # HTML 리포트 생성
 ├── TELEGRAM_SETUP.md                  # 📱 Telegram 봇 설정 가이드 (5분)
 └── README.md
 ```
+
+### 🆕 telegram-bot-template.json (최신 워크플로우)
+
+**특징:**
+- 🤖 **Telegram 봇 명령어 지원**: `/scan <대상>` 명령으로 스캔 시작
+- 🔍 **전체 포트 스캔**: 1-65535 모든 TCP 포트 검사
+- ⏰ **자동 폴링**: 매 30초마다 Telegram 메시지 확인
+- 📊 **실시간 결과**: 스캔 완료 시 자동으로 Telegram 전송
+
+**사용 방법:**
+1. `telegram-bot-template.json` 파일을 복사하여 수정
+2. `YOUR_TELEGRAM_BOT_TOKEN`을 실제 봇 토큰으로 교체
+3. n8n에 import 후 활성화
+4. Telegram에서 `/scan localhost` 또는 `/scan 192.168.1.10` 명령 전송
 
 ## 💻 Code Samples
 

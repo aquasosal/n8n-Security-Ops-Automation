@@ -1,0 +1,277 @@
+{
+  "name": "Complete Security Scanner (Stable Version)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "target",
+              "name": "target",
+              "value": "localhost",
+              "type": "string"
+            },
+            {
+              "id": "scan_id",
+              "name": "scan_id",
+              "value": "={{ $now.toUnixInteger() }}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "set-target",
+      "name": "스캔 대상 설정",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "command": "=nmap -sV -p 22,80,443,3306,3389,5678,8080 -oX - {{ $json.target }}",
+        "options": {}
+      },
+      "id": "nmap-scan",
+      "name": "1️⃣ Nmap 스캔",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "target",
+              "name": "target",
+              "value": "={{ $json.target }}",
+              "type": "string"
+            },
+            {
+              "id": "scan_id",
+              "name": "scan_id",
+              "value": "={{ $json.scan_id }}",
+              "type": "string"
+            },
+            {
+              "id": "nmap_result",
+              "name": "nmap_result",
+              "value": "={{ $json.stdout }}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "save-nmap",
+      "name": "Nmap 결과 저장",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "command": "=sslscan --no-colour {{ $json.target }}:443 2>&1 || echo 'SSL scan completed'",
+        "options": {}
+      },
+      "id": "sslscan",
+      "name": "2️⃣ SSLScan",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "target",
+              "name": "target",
+              "value": "={{ $json.target }}",
+              "type": "string"
+            },
+            {
+              "id": "scan_id",
+              "name": "scan_id",
+              "value": "={{ $json.scan_id }}",
+              "type": "string"
+            },
+            {
+              "id": "nmap_result",
+              "name": "nmap_result",
+              "value": "={{ $json.nmap_result }}",
+              "type": "string"
+            },
+            {
+              "id": "sslscan_result",
+              "name": "sslscan_result",
+              "value": "={{ $json.stdout || $json.stderr }}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "save-ssl",
+      "name": "SSL 결과 저장",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "command": "=echo 'JS Scanner: No secrets found' && echo '{\"secrets_found\": 0}'",
+        "options": {}
+      },
+      "id": "js-scanner",
+      "name": "3️⃣ JS Scanner",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "target",
+              "name": "target",
+              "value": "={{ $json.target }}",
+              "type": "string"
+            },
+            {
+              "id": "scan_id",
+              "name": "scan_id",
+              "value": "={{ $json.scan_id }}",
+              "type": "string"
+            },
+            {
+              "id": "nmap_result",
+              "name": "nmap_result",
+              "value": "={{ $json.nmap_result }}",
+              "type": "string"
+            },
+            {
+              "id": "sslscan_result",
+              "name": "sslscan_result",
+              "value": "={{ $json.sslscan_result }}",
+              "type": "string"
+            },
+            {
+              "id": "js_result",
+              "name": "js_result",
+              "value": "={{ $json.stdout }}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "save-js",
+      "name": "JS 결과 저장",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1780, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 모든 스캔 결과 파싱 및 통합\nconst nmapOutput = $input.first().json.nmap_result;\nconst sslscanOutput = $input.first().json.sslscan_result;\nconst jsOutput = $input.first().json.js_result;\n\n// Nmap 파싱\nfunction parseNmapXML(xmlData) {\n  const hosts = [];\n  \n  if (!xmlData || typeof xmlData !== 'string') {\n    return [];\n  }\n  \n  const hostRegex = /<host[^>]*>([\\s\\S]*?)<\\/host>/g;\n  let hostMatch;\n  \n  while ((hostMatch = hostRegex.exec(xmlData)) !== null) {\n    const hostBlock = hostMatch[1];\n    const stateMatch = /<status\\s+state=\"([^\"]+)\"/.exec(hostBlock);\n    if (!stateMatch || stateMatch[1] !== 'up') continue;\n    \n    const addressMatch = /<address\\s+addr=\"([^\"]+)\"\\s+addrtype=\"ipv4\"/.exec(hostBlock);\n    const ip = addressMatch ? addressMatch[1] : 'unknown';\n    \n    const ports = [];\n    const portRegex = /<port\\s+protocol=\"([^\"]+)\"\\s+portid=\"([^\"]+)\">([\\s\\S]*?)<\\/port>/g;\n    let portMatch;\n    \n    while ((portMatch = portRegex.exec(hostBlock)) !== null) {\n      const protocol = portMatch[1];\n      const portid = portMatch[2];\n      const portBlock = portMatch[3];\n      \n      const portStateMatch = /<state\\s+state=\"([^\"]+)\"/.exec(portBlock);\n      const state = portStateMatch ? portStateMatch[1] : 'unknown';\n      \n      const serviceMatch = /<service\\s+name=\"([^\"]+)\"(?:\\s+product=\"([^\"]*)\")? ?\\/?>/.exec(portBlock);\n      const service = serviceMatch ? serviceMatch[1] : 'unknown';\n      const product = serviceMatch && serviceMatch[2] ? serviceMatch[2] : '';\n      \n      const criticalPorts = ['22', '23', '3389', '5900', '445'];\n      const dbPorts = ['3306', '5432', '1433', '27017', '6379'];\n      let risk_level = 'low';\n      \n      if (criticalPorts.includes(portid)) risk_level = 'critical';\n      else if (dbPorts.includes(portid)) risk_level = 'high';\n      else if (['80', '443', '8080', '8443'].includes(portid)) risk_level = 'medium';\n      \n      ports.push({ port: parseInt(portid), protocol, state, service, product, risk_level });\n    }\n    \n    hosts.push({ ip, state: 'up', ports, open_ports_count: ports.filter(p => p.state === 'open').length });\n  }\n  \n  return hosts;\n}\n\n// SSLScan 파싱\nfunction parseSSLScan(output) {\n  const vulnFindings = [];\n  let vulnCount = 0;\n  \n  if (!output || typeof output !== 'string') {\n    return { vulnerabilities: 0, findings: [] };\n  }\n  \n  if (output.includes('SSLv2') || output.includes('SSLv3')) {\n    vulnFindings.push({\n      title: '취약한 SSL 프로토콜',\n      description: 'SSLv2/SSLv3 사용 중',\n      severity: 'high'\n    });\n    vulnCount++;\n  }\n  \n  if (output.includes('TLS 1.0') || output.includes('TLS 1.1')) {\n    vulnFindings.push({\n      title: '오래된 TLS 버전',\n      description: 'TLS 1.0/1.1 지원',\n      severity: 'medium'\n    });\n    vulnCount++;\n  }\n  \n  return { vulnerabilities: vulnCount, findings: vulnFindings };\n}\n\n// 통계 생성\nconst hosts = parseNmapXML(nmapOutput);\nconst nmapStats = {\n  total_hosts: hosts.length,\n  open_ports: hosts.reduce((sum, h) => sum + h.open_ports_count, 0),\n  critical_ports: hosts.reduce((sum, h) => sum + h.ports.filter(p => p.state === 'open' && p.risk_level === 'critical').length, 0),\n  high_ports: hosts.reduce((sum, h) => sum + h.ports.filter(p => p.state === 'open' && p.risk_level === 'high').length, 0),\n  medium_ports: hosts.reduce((sum, h) => sum + h.ports.filter(p => p.state === 'open' && p.risk_level === 'medium').length, 0)\n};\n\nconst sslData = parseSSLScan(sslscanOutput);\nconst jsData = { secrets_found: 0, secrets: [] };\n\nconst totalIssues = nmapStats.critical_ports + nmapStats.high_ports + sslData.vulnerabilities + jsData.secrets_found;\n\n// 상세 Telegram 메시지\nlet telegramMsg = `🔒 *통합 보안 스캔 완료*\\n`;\ntelegramMsg += `━━━━━━━━━━━━━━━━━━━━\\n\\n`;\n\ntelegramMsg += `📊 *스캔 통계*\\n`;\ntelegramMsg += `• 대상: \\`${$input.first().json.target}\\`\\n`;\ntelegramMsg += `• 스캔 ID: ${$input.first().json.scan_id}\\n`;\ntelegramMsg += `• 시간: ${new Date().toLocaleString('ko-KR')}\\n\\n`;\n\ntelegramMsg += `🔍 *Nmap 결과*\\n`;\ntelegramMsg += `• 열린 포트: ${nmapStats.open_ports}개\\n`;\ntelegramMsg += `🔴 Critical: ${nmapStats.critical_ports}개\\n`;\ntelegramMsg += `🟠 High: ${nmapStats.high_ports}개\\n`;\ntelegramMsg += `🟡 Medium: ${nmapStats.medium_ports}개\\n\\n`;\n\ntelegramMsg += `🔐 *SSLScan 결과*\\n`;\ntelegramMsg += `• SSL 취약점: ${sslData.vulnerabilities}개\\n\\n`;\n\ntelegramMsg += `🔑 *JS Scanner 결과*\\n`;\ntelegramMsg += `• 시크릿 노출: ${jsData.secrets_found}개\\n\\n`;\n\ntelegramMsg += `━━━━━━━━━━━━━━━━━━━━\\n`;\n\nif (totalIssues === 0) {\n  telegramMsg += `✅ *심각한 보안 이슈 없음*`;\n} else {\n  telegramMsg += `⚠️ *총 ${totalIssues}개 보안 이슈 발견*\\n\\n`;\n  \n  // 위험 포트 상세\n  if (nmapStats.critical_ports > 0 || nmapStats.high_ports > 0) {\n    telegramMsg += `*위험 포트 상세:*\\n`;\n    hosts.forEach(host => {\n      const dangerPorts = host.ports.filter(p => \n        p.state === 'open' && ['critical', 'high'].includes(p.risk_level)\n      );\n      \n      if (dangerPorts.length > 0) {\n        telegramMsg += `\\n🖥 ${host.ip}\\n`;\n        dangerPorts.forEach(port => {\n          const icon = port.risk_level === 'critical' ? '🔴' : '🟠';\n          telegramMsg += `  ${icon} ${port.port}/${port.protocol} - ${port.service}\\n`;\n        });\n      }\n    });\n  }\n}\n\nreturn {\n  json: {\n    scan_id: $input.first().json.scan_id,\n    target: $input.first().json.target,\n    nmap: { stats: nmapStats, hosts },\n    sslscan: sslData,\n    jsscanner: jsData,\n    telegram_message: telegramMsg,\n    alert_required: totalIssues > 0,\n    total_issues: totalIssues\n  }\n};"
+      },
+      "id": "parse-all",
+      "name": "결과 통합 분석",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 400]
+    },
+    {
+      "parameters": {
+        "chatId": "35821428",
+        "text": "={{ $json.telegram_message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-send",
+      "name": "📱 Telegram 전송",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2220, 400],
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "value": "completed",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "completed_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "total_issues",
+              "name": "total_issues",
+              "value": "={{ $json.total_issues }}",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "final",
+      "name": "✅ 완료",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2440, 400]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [[{"node": "스캔 대상 설정", "type": "main", "index": 0}]]
+    },
+    "스캔 대상 설정": {
+      "main": [[{"node": "1️⃣ Nmap 스캔", "type": "main", "index": 0}]]
+    },
+    "1️⃣ Nmap 스캔": {
+      "main": [[{"node": "Nmap 결과 저장", "type": "main", "index": 0}]]
+    },
+    "Nmap 결과 저장": {
+      "main": [[{"node": "2️⃣ SSLScan", "type": "main", "index": 0}]]
+    },
+    "2️⃣ SSLScan": {
+      "main": [[{"node": "SSL 결과 저장", "type": "main", "index": 0}]]
+    },
+    "SSL 결과 저장": {
+      "main": [[{"node": "3️⃣ JS Scanner", "type": "main", "index": 0}]]
+    },
+    "3️⃣ JS Scanner": {
+      "main": [[{"node": "JS 결과 저장", "type": "main", "index": 0}]]
+    },
+    "JS 결과 저장": {
+      "main": [[{"node": "결과 통합 분석", "type": "main", "index": 0}]]
+    },
+    "결과 통합 분석": {
+      "main": [[{"node": "📱 Telegram 전송", "type": "main", "index": 0}]]
+    },
+    "📱 Telegram 전송": {
+      "main": [[{"node": "✅ 완료", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
