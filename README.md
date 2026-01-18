@@ -98,14 +98,16 @@ API/Nmap 실행     → 10분 (자동)
 
 ```
 security-automation-n8n/
-├── production-workflow.json       # ⭐ 프로덕션 워크플로우 (자동 실행)
-├── nmap-parser-workflow.json     # Nmap 파싱 테스트 워크플로우
-├── test-workflow-simple.json     # 기본 동작 확인용
+├── production-workflow-telegram.json  # ⭐ Telegram 알림 (권장)
+├── production-workflow.json           # 콘솔 출력만
+├── nmap-parser-workflow.json          # Nmap 파싱 테스트
+├── test-workflow-simple.json          # 기본 동작 확인용
 ├── scripts/
-│   ├── parse-nmap.js             # Nmap XML → JSON 파싱
-│   └── parse-cve.js              # NVD API → 위험도 분석
+│   ├── parse-nmap.js                  # Nmap XML → JSON 파싱
+│   └── parse-cve.js                   # NVD API → 위험도 분석
 ├── screenshots/
-│   └── nmap-workflow-result.png  # 실제 실행 결과 캡처
+│   └── nmap-workflow-result.png       # 실제 실행 결과
+├── TELEGRAM_SETUP.md                  # 📱 Telegram 봇 설정 가이드 (5분)
 └── README.md
 ```
 
@@ -227,37 +229,45 @@ function calculatePriority(cve) {
 
 ## 🚀 Quick Start
 
-### 1. n8n 설치
+### 1. n8n 설치 및 Nmap 설치
 
 ```bash
-# Docker로 설치 (권장)
-docker run -it --rm \
+# Docker로 n8n 실행
+docker run -d \
   --name n8n \
   -p 5678:5678 \
-  -v ~/.n8n:/home/node/.n8n \
+  -e TELEGRAM_CHAT_ID=YOUR_CHAT_ID \
+  -v n8n_data:/home/node/.n8n \
   n8nio/n8n
 
-# 또는 npm으로 설치
-npm install -g n8n
-n8n start
+# Nmap 설치 (Alpine Linux)
+docker exec -u root n8n apk add nmap nmap-scripts
 ```
 
-### 2. 워크플로우 Import
+### 2. Telegram 봇 설정 (5분) ⭐ 권장
+
+📱 **[TELEGRAM_SETUP.md](TELEGRAM_SETUP.md) 가이드 참고**
+
+1. @BotFather에서 봇 생성 → Token 받기
+2. 봇과 대화 시작 → Chat ID 받기
+3. n8n에 Credential 등록
+4. 완료! 🎉
+
+### 3. 워크플로우 Import
 
 1. n8n 웹 인터페이스 접속: `http://localhost:5678`
 2. 우측 상단 메뉴 → **Import from File**
-3. `cve-monitor.json` 파일 선택
-4. 워크플로우 활성화
+3. **워크플로우 선택**:
+   - ⭐ `production-workflow-telegram.json` (Telegram 알림)
+   - 또는 `production-workflow.json` (콘솔만)
+4. Telegram Credential 연결 (Telegram 워크플로우인 경우)
 
-### 3. Credentials 설정
+### 4. (선택) 추가 Credentials
 
-워크플로우에서 사용하는 인증 정보:
-
-- **Slack OAuth2**: Slack 앱 생성 후 Bot Token 발급
 - **PostgreSQL**: DB 연결 정보 (선택사항)
 - **SMTP**: 이메일 발송용 (선택사항)
 
-### 4. 스캔 대상 설정
+### 5. 스캔 대상 설정
 
 **Execute Command 노드** 수정:
 ```bash
@@ -306,10 +316,16 @@ docker exec -u root n8n apk add nmap nmap-scripts
    - XML 파싱 및 위험도 평가 테스트
    - 실제 실행 결과: [Screenshot](screenshots/nmap-workflow-result.png)
 
-3. **production-workflow.json**: 프로덕션 배포 🚀
+3. **production-workflow.json**: 콘솔 출력 버전 📄
    - 7개 노드: 자동화된 전체 플로우
-   - 단일 클릭으로 전체 스캔 → 분석 → 알림 자동 실행
-   - 리포트 자동 생성 및 분기 처리
+   - 콘솔에만 결과 출력
+   - 외부 알림 없이 테스트용
+
+4. **production-workflow-telegram.json**: Telegram 알림 🚀 (권장)
+   - 8개 노드: Telegram 메시지 전송 포함
+   - 위험 포트 발견 시 즉시 모바일 알림
+   - 정상 스캔도 Telegram으로 리포트 전송
+   - [Telegram 설정 가이드](TELEGRAM_SETUP.md) 참고
 
 ## 📊 Impact & Results
 
